@@ -1,0 +1,12 @@
+torch
+torchvision
+torchaudio
+numpy
+pandas
+matplotlib
+tqdm
+pillow
+opencv-python
+fastapi
+uvicorn
+tensorboard
