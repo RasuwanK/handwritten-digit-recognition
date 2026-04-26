@@ -14,6 +14,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      debugShowCheckedModeBanner: false,
       home: HomeScreen(),
     );
   }
@@ -27,19 +28,21 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  File? _image;
-  String result = "";
-
   final picker = ImagePicker();
+
+  @override
+  void initState() {
+    super.initState();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      pickImage();
+    });
+  }
 
   Future pickImage() async {
     final pickedFile = await picker.pickImage(source: ImageSource.camera);
 
     if (pickedFile != null) {
-      setState(() {
-        _image = File(pickedFile.path);
-      });
-
       uploadImage(File(pickedFile.path));
     }
   }
@@ -47,7 +50,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Future uploadImage(File imageFile) async {
     var request = http.MultipartRequest(
       'POST',
-      Uri.parse('http://YOUR_IP:5000/predict'),
+      Uri.parse('http://192.168.1.46:5000/predict'),
     );
 
     request.files.add(
@@ -59,29 +62,47 @@ class _HomeScreenState extends State<HomeScreen> {
 
     var data = json.decode(res.body);
 
-    setState(() {
-      result = "Predicted Digit: ${data['digit']}";
-    });
+    String result = "Predicted Digit: ${data['digit']}";
+
+  
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ResultScreen(result: result),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: Text("Digit Recognizer")),
-      body: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          _image != null
-              ? Image.file(_image!, height: 200)
-              : Text("No image selected"),
-          SizedBox(height: 20),
-          Text(result, style: TextStyle(fontSize: 24)),
-          SizedBox(height: 20),
-          ElevatedButton(
-            onPressed: pickImage,
-            child: Text("Capture Digit"),
+      body: Center(
+        child: Text("Opening Camera..."),
+      ),
+    );
+  }
+}
+
+class ResultScreen extends StatelessWidget {
+  final String result;
+
+  ResultScreen({required this.result});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text("Result")),
+      body: Padding(
+        padding: EdgeInsets.all(20),
+        child: TextField(
+          readOnly: true,
+          decoration: InputDecoration(
+            border: OutlineInputBorder(),
+            labelText: "Prediction Result",
+            hintText: result,
           ),
-        ],
+        ),
       ),
     );
   }
