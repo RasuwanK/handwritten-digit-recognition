@@ -109,30 +109,48 @@ class _DetectScreenState extends State<DetectScreen> {
       // Capture the drawing as an image
       RenderRepaintBoundary boundary = _globalKey.currentContext!.findRenderObject() as RenderRepaintBoundary;
       ui.Image image = await boundary.toImage(pixelRatio: 3.0);
-      ByteData? byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+
+      // Resize and invert (black digits on white -> white digits on black 28x28)
+      final recorder = ui.PictureRecorder();
+      final canvas = Canvas(recorder);
+      final paint = Paint()
+        ..filterQuality = ui.FilterQuality.high
+        ..colorFilter = const ColorFilter.matrix([
+          -1,  0,  0, 0, 255,
+           0, -1,  0, 0, 255,
+           0,  0, -1, 0, 255,
+           0,  0,  0, 1,   0,
+        ]);
+      
+      canvas.drawImageRect(
+        image,
+        Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble()),
+        const Rect.fromLTWH(0, 0, 28, 28),
+        paint,
+      );
+      
+      final resizedImage = await recorder.endRecording().toImage(28, 28);
+
+      ByteData? byteData = await resizedImage.toByteData(format: ui.ImageByteFormat.png);
       Uint8List pngBytes = byteData!.buffer.asUint8List();
 
-      // Determine the localhost URL based on the platform (Android emulator uses 10.0.2.2)
-      String url = 'http://127.0.0.1:5000/detect';
+      String url = 'http://127.0.0.1:8000/detect';
       if (Platform.isAndroid) {
-        url = 'http://10.0.2.2:5000/detect';
+        url = 'http://10.0.2.2:8000/detect';
       }
 
-      var request = http.MultipartRequest('POST', Uri.parse(url));
-      request.files.add(http.MultipartFile.fromBytes(
-        'image',
-        pngBytes,
-        filename: 'digit.png',
-      ));
+      String base64Image = base64Encode(pngBytes);
 
-      var response = await request.send();
-      var responseData = await http.Response.fromStream(response);
+      var response = await http.post(
+        Uri.parse(url),
+        headers: {"Content-Type": "application/json"},
+        body: json.encode({"image": base64Image}),
+      );
 
       if (response.statusCode == 200) {
-        var data = json.decode(responseData.body);
+        var data = json.decode(response.body);
         setState(() {
-          // Fallback properties just in case the API structure varies
-          _result = "Predicted Digit: ${data['digit'] ?? data['prediction'] ?? data['result'] ?? 'Unknown'}";
+          _result = "Predicted Digit: ${data['prediction']}\nConfidence: ${(data['confidence'] * 100).toStringAsFixed(1)}%";
         });
       } else {
         setState(() {
@@ -141,7 +159,7 @@ class _DetectScreenState extends State<DetectScreen> {
       }
     } catch (e) {
       setState(() {
-        _result = "Error: Could not connect to server.\nMake sure the server is running on localhost:5000.";
+        _result = "Error: Could not connect to server.\nMake sure the server is running on localhost:8000.";
       });
     } finally {
       setState(() {
@@ -315,18 +333,11 @@ class GenerateScreen extends StatefulWidget {
 }
 
 class _GenerateScreenState extends State<GenerateScreen> {
-  final TextEditingController _controller = TextEditingController();
   Uint8List? _generatedImageBytes;
   bool _isLoading = false;
   String _errorMsg = "";
 
   Future<void> _generateDigit() async {
-    final text = _controller.text.trim();
-    if (text.isEmpty) return;
-
-    // Dismiss keyboard
-    FocusScope.of(context).unfocus();
-
     setState(() {
       _isLoading = true;
       _errorMsg = "";
@@ -334,20 +345,22 @@ class _GenerateScreenState extends State<GenerateScreen> {
     });
 
     try {
-      String url = 'http://127.0.0.1:5000/generate';
+      String url = 'http://127.0.0.1:8000/generate';
       if (Platform.isAndroid) {
-        url = 'http://10.0.2.2:5000/generate';
+        url = 'http://10.0.2.2:8000/generate';
       }
 
-      var response = await http.post(
-        Uri.parse(url),
-        headers: {"Content-Type": "application/json"},
-        body: json.encode({"text": text}),
-      );
+      var response = await http.get(Uri.parse(url));
 
       if (response.statusCode == 200) {
+        var data = json.decode(response.body);
+        String base64Str = data['image'];
+        if (base64Str.startsWith('data:image/png;base64,')) {
+          base64Str = base64Str.substring('data:image/png;base64,'.length);
+        }
+
         setState(() {
-          _generatedImageBytes = response.bodyBytes;
+          _generatedImageBytes = base64Decode(base64Str);
         });
       } else {
         setState(() {
@@ -356,7 +369,7 @@ class _GenerateScreenState extends State<GenerateScreen> {
       }
     } catch (e) {
       setState(() {
-        _errorMsg = "Error connecting to server.\nMake sure localhost:5000 is running.";
+        _errorMsg = "Error connecting to server.\nMake sure localhost:8000 is running.";
       });
     } finally {
       setState(() {
@@ -367,7 +380,6 @@ class _GenerateScreenState extends State<GenerateScreen> {
 
   @override
   void dispose() {
-    _controller.dispose();
     super.dispose();
   }
 
@@ -387,29 +399,9 @@ class _GenerateScreenState extends State<GenerateScreen> {
             children: [
               const SizedBox(height: 20),
               const Text(
-                "Enter a number to generate its handwritten format",
+                "Click the button below to generate a random handwritten digit",
                 style: TextStyle(fontSize: 16, color: Colors.grey),
                 textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 30),
-              // Input Field
-              Center(
-                child: Container(
-                  constraints: const BoxConstraints(maxWidth: 300),
-                  child: TextField(
-                    controller: _controller,
-                    keyboardType: TextInputType.text, // Allowing text, could be multiple digits
-                    decoration: InputDecoration(
-                      labelText: "Enter a digit or text",
-                      prefixIcon: const Icon(Icons.edit_document),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(15),
-                      ),
-                      filled: true,
-                    ),
-                    onSubmitted: (_) => _generateDigit(),
-                  ),
-                ),
               ),
               const SizedBox(height: 30),
               // Generate Button
