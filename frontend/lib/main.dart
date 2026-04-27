@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
 void main() {
@@ -333,11 +334,20 @@ class GenerateScreen extends StatefulWidget {
 }
 
 class _GenerateScreenState extends State<GenerateScreen> {
+  final TextEditingController _textController = TextEditingController();
   Uint8List? _generatedImageBytes;
   bool _isLoading = false;
   String _errorMsg = "";
 
   Future<void> _generateDigit() async {
+    final text = _textController.text.trim();
+    if (text.isEmpty) {
+      setState(() {
+        _errorMsg = "Please enter some numbers.";
+      });
+      return;
+    }
+
     setState(() {
       _isLoading = true;
       _errorMsg = "";
@@ -350,7 +360,11 @@ class _GenerateScreenState extends State<GenerateScreen> {
         url = 'http://10.0.2.2:8000/generate';
       }
 
-      var response = await http.get(Uri.parse(url));
+      var response = await http.post(
+        Uri.parse(url),
+        headers: {"Content-Type": "application/json"},
+        body: json.encode({"text": text}),
+      );
 
       if (response.statusCode == 200) {
         var data = json.decode(response.body);
@@ -380,6 +394,7 @@ class _GenerateScreenState extends State<GenerateScreen> {
 
   @override
   void dispose() {
+    _textController.dispose();
     super.dispose();
   }
 
@@ -399,11 +414,30 @@ class _GenerateScreenState extends State<GenerateScreen> {
             children: [
               const SizedBox(height: 20),
               const Text(
-                "Click the button below to generate a random handwritten digit",
+                "Enter a number to generate handwritten digits",
                 style: TextStyle(fontSize: 16, color: Colors.grey),
                 textAlign: TextAlign.center,
               ),
-              const SizedBox(height: 30),
+              const SizedBox(height: 20),
+              // Text Field
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 40.0),
+                child: TextField(
+                  controller: _textController,
+                  keyboardType: TextInputType.number,
+                  inputFormatters: [
+                    FilteringTextInputFormatter.digitsOnly,
+                  ],
+                  decoration: InputDecoration(
+                    labelText: "Enter numbers (e.g., 123)",
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    prefixIcon: const Icon(Icons.numbers),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
               // Generate Button
               ElevatedButton.icon(
                 onPressed: _isLoading ? null : _generateDigit,
@@ -448,9 +482,17 @@ class _GenerateScreenState extends State<GenerateScreen> {
                   ),
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(18),
-                    child: Image.memory(
-                      _generatedImageBytes!,
-                      fit: BoxFit.contain,
+                    child: ColorFiltered(
+                      colorFilter: const ColorFilter.matrix([
+                        -1,  0,  0, 0, 255,
+                         0, -1,  0, 0, 255,
+                         0,  0, -1, 0, 255,
+                         0,  0,  0, 1,   0,
+                      ]),
+                      child: Image.memory(
+                        _generatedImageBytes!,
+                        fit: BoxFit.contain,
+                      ),
                     ),
                   ),
                 ),

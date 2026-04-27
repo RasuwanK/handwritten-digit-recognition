@@ -13,8 +13,8 @@ from fastapi.middleware.cors import CORSMiddleware
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from utils.build_classifier import DeformableNet
-from utils.build_generator import Generator
-from backend.schemas import DetectRequest, DetectResponse, GenerateResponse
+from utils.build_generator import ConditionalGenerator
+from backend.schemas import DetectRequest, DetectResponse, GenerateRequest, GenerateResponse
 from backend.model_utils import base64_to_image, image_to_base64, preprocess_for_classification
 
 app = FastAPI(title="Handwritten Digit Recognition API")
@@ -53,7 +53,7 @@ async def startup_event():
         
     try:
         # Load Generator
-        generator = Generator().to(device)
+        generator = ConditionalGenerator().to(device)
         generator.load_state_dict(torch.load(generator_path, map_location=device, weights_only=True))
         generator.eval()
         print("Generator loaded successfully.")
@@ -81,24 +81,31 @@ async def detect_digit(request: DetectRequest):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error processing image: {str(e)}")
 
-@app.get("/generate", response_model=GenerateResponse)
-async def generate_digit():
-    """Generates a random handwritten digit."""
+@app.post("/generate", response_model=GenerateResponse)
+async def generate_digit(request: GenerateRequest):
+    """Generates handwritten digits based on input text."""
     if generator is None:
         raise HTTPException(status_code=500, detail="Generator model not loaded.")
         
+    if not request.text.isdigit():
+        raise HTTPException(status_code=400, detail="Text must contain only numeric digits (0-9).")
+        
+    if len(request.text) == 0:
+        raise HTTPException(status_code=400, detail="Text cannot be empty.")
+        
     try:
-        # Generator expects 100-dim noise
-        noise = torch.randn(1, 100, 1, 1, device=device)
+        # Create a list of labels from the input text
+        labels_list = [int(digit) for digit in request.text]
+        batch_size = len(labels_list)
+        
+        labels_tensor = torch.tensor(labels_list, dtype=torch.long, device=device)
+        noise = torch.randn(batch_size, 100, 1, 1, device=device)
         
         with torch.no_grad():
-            fake_image = generator(noise) # Shape: (1, 1, 32, 32)
+            fake_images = generator(noise, labels_tensor) # Shape: (batch_size, 1, 32, 32)
             
-        # The generator has a Tanh output, so images are in range [-1, 1].
-        # We need to scale them back to [0, 1] then [0, 255] for PIL.
-        # torchvision.utils.make_grid with normalize=True does scaling to [0, 1]
-        grid = vutils.make_grid(fake_image, normalize=True)
-        # grid shape is (3, 32, 32)
+        # Create a grid of images in a single row
+        grid = vutils.make_grid(fake_images, nrow=batch_size, padding=2, normalize=True)
         
         # Convert tensor to numpy and then to PIL Image
         ndarr = grid.mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to('cpu', torch.uint8).numpy()
